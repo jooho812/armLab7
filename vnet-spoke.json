@@ -1,0 +1,142 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "peer": {
+           "type": "bool",
+           "allowedValues": [true, false],
+           "defaultValue": true
+        },
+        "hub": {
+           "type": "object",
+           "defaultValue": {
+               "resourceGroup": "armLab7.1",
+               "vnet": {
+                   "name": "hubnet"
+               }
+           }
+        },
+        "spoke": {
+           "type": "object",
+           "defaultValue": {
+               "vnet": {
+                   "name": "spokenet",
+                   "addressPrefixes": ["10.20.0.0/16"]
+               },
+               "subnets": [
+                   {"name": "frontEnd", "addressPrefix": "10.20.0.0/24"},
+                   {"name": "backEnd", "addressPrefix": "10.20.1.0/24"}
+               ]
+           }
+        }
+    },
+    "variables": {
+        "hubId": "[if(parameters('peer'), resourceId(parameters('hub').resourceGroup, 'Microsoft.Network/virtualNetworks/', parameters('hub').vnet.name), '')]",
+        "spokeId": "[resourceId('Microsoft.Network/virtualNetworks/', parameters('spoke').vnet.name)]",
+        "copy": [{
+            "name": "subnets",
+            "count": "[length(parameters('spoke').subnets)]",
+            "input": {
+                "name": "[parameters('spoke').subnets[copyIndex('subnets')].name]",
+                "addressPrefix": "[parameters('spoke').subnets[copyIndex('subnets')].addressPrefix]",
+                "id": "[concat(resourceId('Microsoft.Network/virtualNetworks/', parameters('spoke').vnet.name), '/subnets/', parameters('spoke').subnets[copyIndex('subnets')].name)]"
+            }
+        }]
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2018-08-01",
+            "name": "[parameters('spoke').vnet.name]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": "[parameters('spoke').vnet.addressPrefixes]"
+                },
+                "copy": [{
+                    "name": "subnets",
+                    "count": "[length(parameters('spoke').subnets)]",
+                    "input": {
+                        "name": "[parameters('spoke').subnets[copyIndex('subnets')].name]",
+                        "properties": {
+                            "addressPrefix": "[parameters('spoke').subnets[copyIndex('subnets')].addressPrefix]"
+                        }
+                    }
+                }]
+            }
+        },
+        {
+            "condition": "[parameters('peer')]",
+            "name": "[concat(parameters('spoke').vnet.name, '/peering-to-', parameters('hub').vnet.name)]",
+            "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+            "apiVersion": "2019-04-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[variables('spokeId')]"
+            ],
+            "properties": {
+              "allowVirtualNetworkAccess": true,
+              "allowForwardedTraffic": false,
+              "allowGatewayTransit": false,
+              "useRemoteGateways": false,
+              "remoteVirtualNetwork": {
+                "id": "[variables('hubId')]"
+              }
+            }
+        },
+        {
+            "condition": "[parameters('peer')]",
+            "name": "[concat('peer-', parameters('hub').vnet.name, '-to-', parameters('spoke').vnet.name)]",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2019-05-01",
+            "resourceGroup": "[parameters('hub').resourceGroup]",
+            "dependsOn": [
+                "[variables('spokeId')]"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                        {
+                            "name": "[concat(parameters('hub').vnet.name, '/peering-to-', parameters('spoke').vnet.name)]",
+                            "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
+                            "apiVersion": "2019-04-01",
+                            "location": "[resourceGroup().location]",
+                            "properties": {
+                                "allowVirtualNetworkAccess": true,
+                                "allowForwardedTraffic": false,
+                                "allowGatewayTransit": false,
+                                "useRemoteGateways": false,
+                                "remoteVirtualNetwork": {
+                                    "id": "[variables('spokeId')]"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "outputs": {
+        "peer": {
+           "type": "bool",
+           "value": "[parameters('peer')]"
+        },
+        "hubId": {
+           "type": "string",
+           "value": "[variables('hubId')]"
+        },
+        "spokeId": {
+           "type": "string",
+           "value": "[variables('spokeId')]"
+        },
+        "subnets": {
+           "type": "array",
+           "value": "[variables('subnets')]"
+        }
+    }
+}
